@@ -1,0 +1,12 @@
+.msm .msm-cards{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}
+.msm .msm-card{background:#fff;border:1px solid #dcdcde;border-radius:6px;padding:12px 16px;min-width:130px}
+.msm .msm-card span{display:block;color:#646970;font-size:12px}
+.msm .msm-card strong{display:block;font-size:20px;margin-top:4px}
+.msm .msm-steps .msm-h{width:24px;cursor:move;color:#8c8f94;font-size:18px;text-align:center}
+.msm .msm-steps th.num,.msm .msm-steps td.num,.msm table td.num,.msm table th.num{text-align:right}
+.msm .msm-on{color:#1a7f37;font-weight:600}
+.msm .msm-off{color:#8c8f94}
+.msm .msm-err{color:#b32d2e}
+.msm .msm-saved{color:#1a7f37;font-weight:600}
+.msm #msm-sortable tr.ui-sortable-helper{background:#f0f6fc;box-shadow:0 2px 6px rgba(0,0,0,.15)}
+.msm #msm-sortable .ui-sortable-placeholder{visibility:visible!important;background:#f6f7f7}

@@ -1,0 +1,13 @@
+{
+  "name": "ミカタ ステップメール",
+  "version": "1.0.0",
+  "download_url": "https://raw.githubusercontent.com/yoshimucom-gif/mikata-step-mail-plugin/main/mikata-step-mail.zip",
+  "requires": "5.8",
+  "tested": "6.7",
+  "requires_php": "7.4",
+  "author": "ミカタ株式会社",
+  "homepage": "https://github.com/yoshimucom-gif/mikata-step-mail-plugin",
+  "sections": {
+    "changelog": "1.0.0\n最初の版。DLフォームで同意した人への自動のステップメール、開封・クリック・配信停止の記録、ドラッグでの並べ替え、読者の一覧とCSV。"
+  }
+}
