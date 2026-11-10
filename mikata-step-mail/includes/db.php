@@ -109,6 +109,8 @@ add_action('plugins_loaded', function () {
 
 function msm_defaults() {
     return array(
+        'mode'          => 'test',                 // test=読者には送らない（入れた直後の既定）／live=本番
+        'test_emails'   => 'info@f-mikata.co.jp',  // テストモードで実際に送る宛先
         'enabled'       => 1,
         'from_name'     => '',
         'from_email'    => '',
@@ -125,6 +127,6 @@ function msm_defaults() {
 }
 
 function msm_opt($key = null) {
-    $o = wp_parse_args((array) get_option(MSM_OPT, array()), msm_defaults());
+    $o = isset($GLOBALS['MSM_OPT_OVERRIDE']) ? $GLOBALS['MSM_OPT_OVERRIDE'] : wp_parse_args((array) get_option(MSM_OPT, array()), msm_defaults());
     return $key === null ? $o : ($o[$key] ?? null);
 }

@@ -124,12 +124,42 @@ function msm_active_steps($scenario) {
         "SELECT * FROM $t WHERE scenario = %s AND status = 'active' ORDER BY position ASC, id ASC", $scenario));
 }
 
+/* テストモードか（入れた直後の既定はテスト＝読者には送らない） */
+function msm_is_test_mode() {
+    return msm_opt('mode') !== 'live';
+}
+
+/* テスト用の宛先（小文字・重複なし） */
+function msm_test_list() {
+    $out = array();
+    foreach (preg_split('/[\s,、]+/u', (string) msm_opt('test_emails')) as $e) {
+        $e = strtolower(trim($e));
+        if ($e !== '' && is_email($e)) $out[$e] = true;
+    }
+    return array_keys($out);
+}
+
+/* 配信の対象（配信中の読者 × 配信対象）。$only_test=true ならテスト用の宛先だけ */
+function msm_queue_rows($only_test) {
+    global $wpdb;
+    $E = msm_table('enrollments');
+    $S = msm_table('subscribers');
+    $rows = (array) $wpdb->get_results(
+        "SELECT e.id AS eid, e.scenario, e.started_at, e.last_sent_at, s.* FROM $E e
+         INNER JOIN $S s ON s.id = e.subscriber_id WHERE s.status = 'active' ORDER BY e.id ASC");
+    if ($only_test) {
+        $list = msm_test_list();
+        $rows = array_values(array_filter($rows, function ($r) use ($list) { return in_array(strtolower($r->email), $list, true); }));
+    }
+    return $rows;
+}
+
 /**
  * 期日の来たメールを送る。返り値は array('sent'=>n, 'failed'=>n, 'skipped'=>理由)
+ * テストモードでは、テスト用の宛先の読者にだけ送る（ほかの読者は何も進めない）。
  * $force=true は時間帯と停止スイッチを無視する（テスト用）
  */
 function msm_run_queue($force = false) {
-    global $wpdb;
     $force = ($force === true);
     $stat = array('sent' => 0, 'failed' => 0, 'skipped' => '');
     if (!$force && !msm_opt('enabled')) { $stat['skipped'] = 'disabled'; return $stat; }
@@ -137,49 +167,111 @@ function msm_run_queue($force = false) {
     if (!$force && !msm_in_window($now_ts)) { $stat['skipped'] = 'window'; return $stat; }
     if (get_transient('msm_lock')) { $stat['skipped'] = 'locked'; return $stat; }
     set_transient('msm_lock', 1, 5 * MINUTE_IN_SECONDS);
+    $sim = null;
+    $stat = msm_engine($now_ts, msm_queue_rows(msm_is_test_mode()), $sim) + $stat;
+    delete_transient('msm_lock');
+    return $stat;
+}
 
-    $limit = max(1, (int) msm_opt('per_run'));
+/**
+ * 1回分の配信の判断と送信。$sim が null なら実際に送って記録する。
+ * $sim が配列なら送らずに、配列の中の状態（済んだメール・最後に送った時刻）を進めて予定を $sim['log'] に積む（ドライラン）。
+ * 送る・送らないの判断は、本番とドライランでこの1か所を共有する。
+ */
+function msm_engine($now_ts, $rows, &$sim) {
+    global $wpdb;
+    $dry = is_array($sim);
     $E = msm_table('enrollments');
-    $S = msm_table('subscribers');
     $L = msm_table('sends');
-    $rows = $wpdb->get_results(
-        "SELECT e.id AS eid, e.scenario, e.started_at, e.last_sent_at, s.* FROM $E e
-         INNER JOIN $S s ON s.id = e.subscriber_id WHERE s.status = 'active' ORDER BY e.id ASC");
-    $cache = array();
+    $stat = array('sent' => 0, 'failed' => 0);
+    $limit = max(1, (int) msm_opt('per_run'));
+    static $step_cache = array();
+    if (!$dry || empty($sim['steps'])) $step_cache = array();
+    $day_ago_ts = $now_ts - 20 * HOUR_IN_SECONDS;
     $sent_today = array();
-    $day_ago = gmdate('Y-m-d H:i:s', $now_ts - 20 * HOUR_IN_SECONDS);
     foreach ($rows as $r) {
         if ($stat['sent'] + $stat['failed'] >= $limit) break;
         $sid = (int) $r->id;
-        if (!isset($cache[$r->scenario])) $cache[$r->scenario] = msm_active_steps($r->scenario);
-        $steps = $cache[$r->scenario];
+        $eid = (int) $r->eid;
+        if ($dry) {
+            if (!isset($sim['steps'][$r->scenario])) $sim['steps'][$r->scenario] = msm_active_steps($r->scenario);
+            $steps = $sim['steps'][$r->scenario];
+        } else {
+            if (!isset($step_cache[$r->scenario])) $step_cache[$r->scenario] = msm_active_steps($r->scenario);
+            $steps = $step_cache[$r->scenario];
+        }
         if (!$steps) continue;
         // 同じ人へは1日1通まで（シナリオをまたいでも）
-        if (!isset($sent_today[$sid])) {
-            $sent_today[$sid] = (int) $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM $L WHERE subscriber_id = %d AND sent_at > %s", $sid, $day_ago));
+        if ($dry) {
+            if (($sim['lastany'][$sid] ?? 0) > $day_ago_ts) continue;
+        } else {
+            if (!isset($sent_today[$sid])) {
+                $sent_today[$sid] = (int) $wpdb->get_var($wpdb->prepare(
+                    "SELECT COUNT(*) FROM $L WHERE subscriber_id = %d AND sent_at > %s", $sid, gmdate('Y-m-d H:i:s', $day_ago_ts)));
+            }
+            if ($sent_today[$sid] > 0) continue;
         }
-        if ($sent_today[$sid] > 0) continue;
         // 送れたもの・3回失敗したものは済み。失敗が3回未満なら次の回にもう一度送る
-        $done = array_map('intval', (array) $wpdb->get_col($wpdb->prepare(
+        $done = $dry ? ($sim['done'][$sid] ?? array()) : array_map('intval', (array) $wpdb->get_col($wpdb->prepare(
             "SELECT step_id FROM $L WHERE subscriber_id = %d AND (result = 'sent' OR attempts >= 3)", $sid)));
         $next = null;
         foreach ($steps as $st) {
             if (!in_array((int) $st->id, $done, true)) { $next = $st; break; }
         }
         if (!$next) continue;
-        $base = $r->last_sent_at ? $r->last_sent_at : $r->started_at;
-        $due = strtotime($base . ' UTC') + (int) $next->delay_days * DAY_IN_SECONDS;
-        if ($due > $now_ts) continue;
+        if ($dry && isset($sim['last'][$eid])) {
+            $base_ts = $sim['last'][$eid];
+        } else {
+            $base_ts = strtotime(($r->last_sent_at ? $r->last_sent_at : $r->started_at) . ' UTC');
+        }
+        if ($base_ts + (int) $next->delay_days * DAY_IN_SECONDS > $now_ts) continue;
+        if ($dry) {
+            $sim['log'][] = array('ts' => $now_ts, 'sub' => $r, 'step' => $next);
+            $sim['done'][$sid][] = (int) $next->id;
+            $sim['last'][$eid] = $now_ts;
+            $sim['lastany'][$sid] = $now_ts;
+            $stat['sent']++;
+            continue;
+        }
         $ok = msm_send_step($next, $r);
         if ($ok === null) continue;   // 二重送信の防止に当たった
         $sent_today[$sid] = 1;
         if (!$ok) { $stat['failed']++; continue; }   // 失敗は間隔の起点にしない（次の回に送り直す）
         $stat['sent']++;
-        $wpdb->update($E, array('last_sent_at' => msm_now()), array('id' => (int) $r->eid));
+        $wpdb->update($E, array('last_sent_at' => msm_now()), array('id' => $eid));
     }
-    delete_transient('msm_lock');
     return $stat;
+}
+
+/**
+ * ドライラン: この先 $days 日の配信予定を、送らずに計算する。
+ * $as_live=true なら「本番にしたら」の予定（全読者）、false なら今の設定（テストモードならテスト用の宛先だけ）。
+ * 15分ごとの配信を1時間単位でまとめて進める（1回の上限は4回分）。返り値は予定の配列（時刻順）
+ */
+function msm_simulate($days = 30, $as_live = true) {
+    global $wpdb;
+    $rows = msm_queue_rows($as_live ? false : msm_is_test_mode());
+    $L = msm_table('sends');
+    $sim = array('log' => array(), 'done' => array(), 'last' => array(), 'lastany' => array(), 'steps' => array());
+    foreach ((array) $wpdb->get_results("SELECT subscriber_id, step_id, result, attempts, sent_at FROM $L") as $s) {
+        $sid = (int) $s->subscriber_id;
+        if ($s->result === 'sent' || (int) $s->attempts >= 3) $sim['done'][$sid][] = (int) $s->step_id;
+        $ts = strtotime($s->sent_at . ' UTC');
+        if ($ts > ($sim['lastany'][$sid] ?? 0)) $sim['lastany'][$sid] = $ts;
+    }
+    if (!$rows) return array();
+    $per = (int) msm_opt('per_run');
+    $opts = get_option(MSM_OPT, array());
+    $opts['per_run'] = max(1, $per) * 4;   // 1時間に4回分
+    $GLOBALS['MSM_OPT_OVERRIDE'] = wp_parse_args($opts, msm_defaults());
+    $now = msm_time();
+    $end = $now + max(0, (int) $days) * DAY_IN_SECONDS;
+    for ($t = $now; $t <= $end; $t += HOUR_IN_SECONDS) {
+        if (!msm_in_window($t)) continue;
+        msm_engine($t, $rows, $sim);
+    }
+    unset($GLOBALS['MSM_OPT_OVERRIDE']);
+    return $sim['log'];
 }
 
 /**
@@ -256,6 +348,7 @@ function msm_unsub_url($sub_token, $send_token = '') {
 /* メールを組み立てて送る（$token=null はテスト送信） */
 function msm_mail($step, $sub, $token, $to = null) {
     $subject = msm_fill($step->subject, $sub);
+    if ($token && msm_is_test_mode()) $subject = '［テスト］' . $subject;   // テストモードで届いたメールだと一目で分かるように
     $body = msm_fill($step->body, $sub);
     $unsub = msm_unsub_url((string) ($sub->token ?? 'test'), (string) $token);
     $footer = trim((string) msm_opt('footer'));

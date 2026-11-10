@@ -24,6 +24,14 @@ jQuery(function ($) {
       }
     });
   }
+  // 本番への切り替えは確認してから
+  var wasLive = $('#msm-live').is(':checked');
+  $('#msm-live').closest('form').on('submit', function () {
+    if (!wasLive && $('#msm-live').is(':checked')) {
+      return window.confirm('本番に切り替えると、同意した読者にステップメールが届き始めます。配信予定（ドライラン）で確かめましたか？');
+    }
+    return true;
+  });
   $('#msm-sc-jump').on('change', function () {
     location.href = 'admin.php?page=msm&sc=' + encodeURIComponent(this.value);
   });

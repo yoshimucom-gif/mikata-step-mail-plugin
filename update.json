@@ -1,6 +1,6 @@
 {
   "name": "工務店のミカタステップメール",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "download_url": "https://raw.githubusercontent.com/yoshimucom-gif/mikata-step-mail-plugin/main/mikata-step-mail.zip",
   "requires": "5.8",
   "tested": "6.7",
@@ -8,6 +8,6 @@
   "author": "ミカタ株式会社",
   "homepage": "https://github.com/yoshimucom-gif/mikata-step-mail-plugin",
   "sections": {
-    "changelog": "1.0.1\nプラグインの名前を「工務店のミカタステップメール」に変更"
+    "changelog": "1.1.0\nテストモード（入れた直後の既定。読者には送らず、テスト用の宛先にだけ［テスト］付きで実際に送る）と、配信予定（ドライラン：送らずに誰にいつ何が届くかを計算）を追加。本番への切り替えは設定で確認つき。"
   }
 }

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: 工務店のミカタステップメール
  * Description: 資料をダウンロードした人（フォームでお知らせメールの受け取りに同意した人）に、決めた順番・間隔でメールを自動で送ります。メールごとの開封・クリック・配信停止を記録し、管理画面で順番をドラッグで入れ替えられます。Contact Form 7 のフォームに同意の欄（acceptance msm-consent）を置いて使います。
- * Version: 1.0.1
+ * Version: 1.1.0
  * Author: ミカタ株式会社
  * License: GPLv2 or later
  * Text Domain: mikata-step-mail
@@ -17,7 +17,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('MSM_VER', '1.0.1');
+define('MSM_VER', '1.1.0');
 define('MSM_DB_VER', '1');
 define('MSM_OPT', 'msm_options');
 define('MSM_DIR', plugin_dir_path(__FILE__));

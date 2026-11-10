@@ -7,6 +7,7 @@ if (!defined('ABSPATH')) exit;
 add_action('admin_menu', function () {
     add_menu_page('ステップメール', 'ステップメール', 'manage_options', 'msm', 'msm_page_steps', 'dashicons-email-alt', 58);
     add_submenu_page('msm', 'メール', 'メール', 'manage_options', 'msm', 'msm_page_steps');
+    add_submenu_page('msm', '配信予定（ドライラン）', '配信予定（ドライラン）', 'manage_options', 'msm-plan', 'msm_page_plan');
     add_submenu_page('msm', '読者', '読者', 'manage_options', 'msm-readers', 'msm_page_readers');
     add_submenu_page('msm', '設定', '設定', 'manage_options', 'msm-settings', 'msm_page_settings');
     add_submenu_page('', 'メールの編集', 'メールの編集', 'manage_options', 'msm-edit', 'msm_page_edit');
@@ -62,6 +63,12 @@ function msm_step_stats() {
 }
 
 function msm_notice() {
+    if (msm_is_test_mode()) {
+        $list = msm_test_list();
+        echo '<div class="notice notice-warning msm-testmode"><p><strong>テストモードです。読者には送っていません。</strong> '
+            . ($list ? 'テスト用の宛先（' . esc_html(implode('、', $list)) . '）にだけ、件名に［テスト］を付けて実際に送ります。' : 'テスト用の宛先が空なので、誰にも送りません。')
+            . ' <a href="' . esc_url(admin_url('admin.php?page=msm-settings')) . '">設定で本番に切り替える</a></p></div>';
+    }
     $m = isset($_GET['msm_msg']) ? sanitize_text_field(wp_unslash($_GET['msm_msg'])) : '';
     if ($m !== '') echo '<div class="notice notice-success is-dismissible"><p>' . esc_html($m) . '</p></div>';
     $e = isset($_GET['msm_err']) ? sanitize_text_field(wp_unslash($_GET['msm_err'])) : '';
@@ -366,6 +373,47 @@ add_action('admin_post_msm_export', function () {
     exit;
 });
 
+/* ------------------------------------------------------------------ 配信予定（ドライラン） */
+function msm_page_plan() {
+    msm_cap();
+    $days = isset($_GET['days']) ? max(1, min(180, (int) $_GET['days'])) : 30;
+    $as_live = !isset($_GET['view']) || $_GET['view'] !== 'now';
+    $log = msm_simulate($days, $as_live);
+    $scs = msm_scenarios();
+    $base = admin_url('admin.php?page=msm-plan');
+    echo '<div class="wrap msm"><h1>配信予定（ドライラン）</h1>';
+    msm_notice();
+    echo '<p>メールは送らずに、今の読者・メール・設定のまま進めた場合に、誰にいつどのメールが届くかを計算します。'
+        . '送る時間帯・1日1通・メールの順番と間隔・止めているメールの扱いは、実際の配信と同じ判断を使っています。</p>';
+    echo '<p class="msm-plan-switch">';
+    foreach (array(7, 30, 90) as $d) {
+        echo '<a class="button' . ($d === $days ? ' button-primary' : '') . '" href="' . esc_url(add_query_arg(array('days' => $d, 'view' => $as_live ? 'live' : 'now'), $base)) . '">' . $d . '日先まで</a> ';
+    }
+    echo '　<a class="button' . ($as_live ? ' button-primary' : '') . '" href="' . esc_url(add_query_arg(array('days' => $days, 'view' => 'live'), $base)) . '">本番にした場合（全読者）</a> ';
+    echo '<a class="button' . (!$as_live ? ' button-primary' : '') . '" href="' . esc_url(add_query_arg(array('days' => $days, 'view' => 'now'), $base)) . '">今の設定のまま</a></p>';
+    if (!$log) {
+        echo '<p>この期間に届く予定のメールはありません。メールが「送る」になっているか、読者がいるかを確かめてください。</p></div>';
+        return;
+    }
+    $by_step = array();
+    foreach ($log as $x) {
+        $k = (int) $x['step']->id;
+        if (!isset($by_step[$k])) $by_step[$k] = array('subject' => $x['step']->subject, 'n' => 0);
+        $by_step[$k]['n']++;
+    }
+    echo '<h2>メールごとの通数</h2><table class="widefat striped" style="max-width:720px"><thead><tr><th>件名</th><th class="num">通数</th></tr></thead><tbody>';
+    foreach ($by_step as $s) echo '<tr><td>' . esc_html($s['subject']) . '</td><td class="num">' . number_format($s['n']) . '</td></tr>';
+    echo '<tr><th>合計</th><th class="num">' . number_format(count($log)) . '</th></tr></tbody></table>';
+    echo '<h2>届く予定（時刻順・最大1,000件）</h2><table class="widefat striped"><thead><tr><th>日時（目安）</th><th>読者</th><th>送る相手</th><th>件名</th></tr></thead><tbody>';
+    foreach (array_slice($log, 0, 1000) as $x) {
+        $when = get_date_from_gmt(gmdate('Y-m-d H:i:s', $x['ts']), 'Y/m/d H') . '時台';
+        $who = trim($x['sub']->company . ' ' . $x['sub']->name);
+        echo '<tr><td>' . esc_html($when) . '</td><td>' . esc_html($who !== '' ? $who : '（名前なし）') . '<br><small>' . esc_html($x['sub']->email) . '</small></td>'
+            . '<td>' . esc_html($scs[$x['step']->scenario] ?? $x['step']->scenario) . '</td><td>' . esc_html(msm_fill($x['step']->subject, $x['sub'])) . '</td></tr>';
+    }
+    echo '</tbody></table><p class="description">日時は1時間単位の目安です（実際の配信は15分ごと）。この画面ではメールは送られず、記録も変わりません。</p></div>';
+}
+
 /* ------------------------------------------------------------------ 設定 */
 function msm_page_settings() {
     msm_cap();
@@ -375,6 +423,12 @@ function msm_page_settings() {
     echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
     wp_nonce_field('msm_save_settings');
     echo '<input type="hidden" name="action" value="msm_save_settings"><table class="form-table">';
+    echo '<tr><th>動作モード</th><td><label><input type="radio" name="mode" value="test"' . checked($o['mode'] !== 'live', true, false) . '> テスト（読者には送らない）</label><br>'
+        . '<label><input type="radio" name="mode" value="live" id="msm-live"' . checked($o['mode'], 'live', false) . '> 本番（読者に送る）</label>'
+        . '<p class="description">テストでは、下の「テスト用の宛先」の読者にだけ、本番と同じ流れで実際に送ります（件名に［テスト］が付き、開封・クリックも記録）。'
+        . 'ほかの読者には何も送らず、配信の順番も進めません。本番に切り替える前に「配信予定（ドライラン）」で、誰にいつ何が届くかを確かめてください。</p></td></tr>';
+    echo '<tr><th>テスト用の宛先</th><td><textarea name="test_emails" rows="3" class="large-text">' . esc_textarea($o['test_emails']) . '</textarea>'
+        . '<p class="description">1行に1件。このアドレスでDLフォームから同意してDLすると、テストの読者として登録され、ステップメールが順に届きます。</p></td></tr>';
     echo '<tr><th>配信</th><td><label><input type="checkbox" name="enabled" value="1"' . checked($o['enabled'], 1, false) . '> 配信する</label>'
         . '<p class="description">外すと、すべてのメールの配信を止めます（登録は続きます）。</p></td></tr>';
     echo '<tr><th>送る時間帯</th><td><input type="number" name="send_start" min="0" max="23" class="small-text" value="' . (int) $o['send_start'] . '"> 時 〜 '
@@ -399,6 +453,8 @@ add_action('admin_post_msm_save_settings', function () {
     check_admin_referer('msm_save_settings');
     $p = wp_unslash($_POST);
     $o = array(
+        'mode'          => (($p['mode'] ?? '') === 'live') ? 'live' : 'test',
+        'test_emails'   => sanitize_textarea_field($p['test_emails'] ?? ''),
         'enabled'       => empty($p['enabled']) ? 0 : 1,
         'send_start'    => max(0, min(23, (int) ($p['send_start'] ?? 9))),
         'send_end'      => max(1, min(24, (int) ($p['send_end'] ?? 20))),
