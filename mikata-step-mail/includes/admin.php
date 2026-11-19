@@ -25,14 +25,6 @@ function msm_cap() {
     if (!current_user_can('manage_options')) wp_die('権限がありません');
 }
 
-function msm_scenarios() {
-    $out = array('all' => 'DLした全員');
-    foreach (get_categories(array('hide_empty' => true)) as $c) {
-        $out['cat:' . $c->term_id] = '「' . $c->name . '」の資料をDLした人';
-    }
-    return $out;
-}
-
 function msm_local($gmt, $fmt = 'Y/m/d H:i') {
     return $gmt ? get_date_from_gmt($gmt, $fmt) : '―';
 }
@@ -200,32 +192,7 @@ function msm_page_edit() {
 add_action('admin_post_msm_save_step', function () {
     msm_cap();
     check_admin_referer('msm_save_step');
-    global $wpdb;
-    $T = msm_table('steps');
-    $id = (int) ($_POST['id'] ?? 0);
-    $scs = msm_scenarios();
-    $sc = sanitize_text_field(wp_unslash($_POST['scenario'] ?? 'all'));
-    if (!isset($scs[$sc])) $sc = 'all';
-    $data = array(
-        'scenario'   => $sc,
-        'delay_days' => max(0, min(365, (int) ($_POST['delay_days'] ?? 0))),
-        'status'     => (($_POST['status'] ?? '') === 'active') ? 'active' : 'paused',
-        'subject'    => sanitize_text_field(wp_unslash($_POST['subject'] ?? '')),
-        'body'       => sanitize_textarea_field(wp_unslash($_POST['body'] ?? '')),
-        'updated_at' => msm_now(),
-    );
-    if ($id) {
-        $old = $wpdb->get_row($wpdb->prepare("SELECT scenario FROM $T WHERE id = %d", $id));
-        if ($old && $old->scenario !== $sc) {
-            $data['position'] = (int) $wpdb->get_var($wpdb->prepare("SELECT MAX(position) FROM $T WHERE scenario = %s", $sc)) + 1;
-        }
-        $wpdb->update($T, $data, array('id' => $id));
-    } else {
-        $data['position'] = (int) $wpdb->get_var($wpdb->prepare("SELECT MAX(position) FROM $T WHERE scenario = %s", $sc)) + 1;
-        $data['created_at'] = msm_now();
-        $wpdb->insert($T, $data);
-        $id = (int) $wpdb->insert_id;
-    }
+    $id = msm_save_step(wp_unslash($_POST));
     wp_safe_redirect(admin_url('admin.php?page=msm-edit&id=' . $id . '&msm_msg=' . rawurlencode('保存しました。')));
     exit;
 });
@@ -233,12 +200,9 @@ add_action('admin_post_msm_save_step', function () {
 add_action('admin_post_msm_test_step', function () {
     msm_cap();
     check_admin_referer('msm_test_step');
-    global $wpdb;
     $id = (int) ($_POST['id'] ?? 0);
     $to = sanitize_email(wp_unslash($_POST['to'] ?? ''));
-    $st = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . msm_table('steps') . " WHERE id = %d", $id));
-    $dummy = (object) array('id' => 0, 'email' => $to, 'name' => 'テスト 太郎', 'company' => '株式会社テスト', 'token' => '');
-    $ok = $st && $to && msm_mail($st, $dummy, null, $to);
+    $ok = msm_test_send($id, $to);
     $q = $ok ? 'msm_msg=' . rawurlencode($to . ' にテスト送信しました。') : 'msm_err=' . rawurlencode('テスト送信できませんでした。送り先とメールの設定を確かめてください。');
     wp_safe_redirect(admin_url('admin.php?page=msm-edit&id=' . $id . '&' . $q));
     exit;

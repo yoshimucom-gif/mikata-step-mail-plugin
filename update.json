@@ -1,6 +1,6 @@
 {
   "name": "工務店のミカタステップメール",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "download_url": "https://raw.githubusercontent.com/yoshimucom-gif/mikata-step-mail-plugin/main/mikata-step-mail.zip",
   "requires": "5.8",
   "tested": "6.7",
@@ -8,6 +8,6 @@
   "author": "ミカタ株式会社",
   "homepage": "https://github.com/yoshimucom-gif/mikata-step-mail-plugin",
   "sections": {
-    "changelog": "1.2.0\n送る時刻を選べるようにした。「DLしたのと同じ時刻」（既定：14時にDLした人には2通目以降も14時ごろに届く）か「全員同じ時刻（○時）」。配信が遅れた回があっても、次からはまた同じ時刻に戻る。当日（0日後）のメールは時刻を待たずに送る。"
+    "changelog": "1.2.1\n管理者だけが使えるRESTを追加（メールの一覧・追加・更新・テスト送信、動作状態の確認）。管理画面と同じ保存の処理を使う。"
   }
 }

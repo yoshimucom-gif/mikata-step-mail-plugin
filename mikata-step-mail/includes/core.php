@@ -509,3 +509,108 @@ function msm_rest_unsub($req) {
     echo '<p style="margin-top:24px"><a href="' . esc_url(home_url('/')) . '">' . $site . ' へ</a></p></div></body></html>';
     exit;
 }
+
+/* ------------------------------------------------------------------ メールの保存（管理画面とRESTで共有） */
+function msm_scenarios() {
+    $out = array('all' => 'DLした全員');
+    foreach (get_categories(array('hide_empty' => true)) as $c) {
+        $out['cat:' . $c->term_id] = '「' . $c->name . '」の資料をDLした人';
+    }
+    return $out;
+}
+
+/**
+ * メールを追加・更新する。$in は wp_unslash 済みの配列（id があれば更新）。返り値はメールのID
+ * 追加したメールは、その配信対象の最後に付く。
+ */
+function msm_save_step($in) {
+    global $wpdb;
+    $T = msm_table('steps');
+    $id = (int) ($in['id'] ?? 0);
+    $scs = msm_scenarios();
+    $sc = sanitize_text_field((string) ($in['scenario'] ?? 'all'));
+    if (!isset($scs[$sc])) $sc = 'all';
+    $data = array(
+        'scenario'   => $sc,
+        'delay_days' => max(0, min(365, (int) ($in['delay_days'] ?? 0))),
+        'status'     => (($in['status'] ?? '') === 'active') ? 'active' : 'paused',
+        'subject'    => sanitize_text_field((string) ($in['subject'] ?? '')),
+        'body'       => sanitize_textarea_field((string) ($in['body'] ?? '')),
+        'updated_at' => msm_now(),
+    );
+    if ($id) {
+        $old = $wpdb->get_row($wpdb->prepare("SELECT scenario FROM $T WHERE id = %d", $id));
+        if (!$old) return 0;
+        if ($old->scenario !== $sc) {
+            $data['position'] = (int) $wpdb->get_var($wpdb->prepare("SELECT MAX(position) FROM $T WHERE scenario = %s", $sc)) + 1;
+        }
+        $wpdb->update($T, $data, array('id' => $id));
+    } else {
+        $data['position'] = (int) $wpdb->get_var($wpdb->prepare("SELECT MAX(position) FROM $T WHERE scenario = %s", $sc)) + 1;
+        $data['created_at'] = msm_now();
+        $wpdb->insert($T, $data);
+        $id = (int) $wpdb->insert_id;
+    }
+    return $id;
+}
+
+/* 1通をテスト送信する（記録用の画像を入れず、送信の記録にも残さない） */
+function msm_test_send($id, $to) {
+    global $wpdb;
+    $st = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . msm_table('steps') . " WHERE id = %d", (int) $id));
+    $dummy = (object) array('id' => 0, 'email' => $to, 'name' => 'テスト 太郎', 'company' => '株式会社テスト', 'token' => '');
+    return (bool) ($st && $to && is_email($to) && msm_mail($st, $dummy, null, $to));
+}
+
+/* ------------------------------------------------------------------ 管理用のREST（管理者だけ） */
+add_action('rest_api_init', function () {
+    $admin = function () { return current_user_can('manage_options'); };
+    register_rest_route('msm/v1', '/admin/status', array(
+        'methods' => 'GET', 'callback' => 'msm_rest_admin_status', 'permission_callback' => $admin));
+    register_rest_route('msm/v1', '/admin/steps', array(
+        array('methods' => 'GET', 'callback' => 'msm_rest_admin_steps', 'permission_callback' => $admin),
+        array('methods' => 'POST', 'callback' => 'msm_rest_admin_save_step', 'permission_callback' => $admin)));
+    register_rest_route('msm/v1', '/admin/steps/(?P<id>\d+)/test', array(
+        'methods' => 'POST', 'callback' => 'msm_rest_admin_test_step', 'permission_callback' => $admin));
+});
+
+function msm_rest_admin_status($req) {
+    global $wpdb;
+    $o = msm_opt();
+    return array(
+        'version'     => MSM_VER,
+        'mode'        => $o['mode'] === 'live' ? 'live' : 'test',
+        'test_emails' => msm_test_list(),
+        'enabled'     => (int) $o['enabled'],
+        'send_time'   => $o['send_time'],
+        'send_hour'   => (int) $o['send_hour'],
+        'window'      => array((int) $o['send_start'], (int) $o['send_end']),
+        'subscribers' => (int) $wpdb->get_var("SELECT COUNT(*) FROM " . msm_table('subscribers') . " WHERE status = 'active'"),
+        'scenarios'   => msm_scenarios(),
+    );
+}
+
+function msm_rest_admin_steps($req) {
+    global $wpdb;
+    return (array) $wpdb->get_results("SELECT * FROM " . msm_table('steps') . " ORDER BY scenario ASC, position ASC, id ASC");
+}
+
+/* 追加・更新。scenario が配信対象の一覧に無いときは保存しない（黙って「全員」にしない） */
+function msm_rest_admin_save_step($req) {
+    global $wpdb;
+    $in = (array) $req->get_params();
+    if (!isset(msm_scenarios()[(string) ($in['scenario'] ?? '')])) {
+        return new WP_Error('msm_bad_scenario', '配信対象が見つかりません: ' . (string) ($in['scenario'] ?? ''), array('status' => 400));
+    }
+    if (trim((string) ($in['subject'] ?? '')) === '' || trim((string) ($in['body'] ?? '')) === '') {
+        return new WP_Error('msm_empty', '件名と本文は必須です', array('status' => 400));
+    }
+    $id = msm_save_step($in);
+    if (!$id) return new WP_Error('msm_not_found', 'メールが見つかりません', array('status' => 404));
+    return $wpdb->get_row($wpdb->prepare("SELECT * FROM " . msm_table('steps') . " WHERE id = %d", $id));
+}
+
+function msm_rest_admin_test_step($req) {
+    $to = sanitize_email((string) $req['to']);
+    return array('ok' => msm_test_send((int) $req['id'], $to), 'to' => $to);
+}
