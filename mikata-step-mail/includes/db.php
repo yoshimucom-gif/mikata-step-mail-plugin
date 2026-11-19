@@ -116,6 +116,8 @@ function msm_defaults() {
         'from_email'    => '',
         'send_start'    => 9,
         'send_end'      => 20,
+        'send_time'     => 'dl',                   // dl=DLしたのと同じ時刻に送る／fixed=決まった時刻（send_hour）に送る
+        'send_hour'     => 10,
         'per_run'       => 30,
         'consent_field' => 'msm-consent',
         'field_email'   => 'your-email',

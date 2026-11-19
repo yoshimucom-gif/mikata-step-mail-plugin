@@ -433,6 +433,12 @@ function msm_page_settings() {
         . '<p class="description">外すと、すべてのメールの配信を止めます（登録は続きます）。</p></td></tr>';
     echo '<tr><th>送る時間帯</th><td><input type="number" name="send_start" min="0" max="23" class="small-text" value="' . (int) $o['send_start'] . '"> 時 〜 '
         . '<input type="number" name="send_end" min="1" max="24" class="small-text" value="' . (int) $o['send_end'] . '"> 時（サイトの時刻）</td></tr>';
+    echo '<tr><th>送る時刻</th><td><label><input type="radio" name="send_time" value="dl"' . checked($o['send_time'] !== 'fixed', true, false) . '> DLしたのと同じ時刻</label>'
+        . '<span class="description">（14時にDLした人には、2通目以降も14時ごろに届く）</span><br>'
+        . '<label><input type="radio" name="send_time" value="fixed"' . checked($o['send_time'], 'fixed', false) . '> 全員同じ時刻：</label> '
+        . '<input type="number" name="send_hour" min="0" max="23" class="small-text" value="' . (int) $o['send_hour'] . '"> 時'
+        . '<p class="description">「前のメールから○日後」の日の、この時刻に送ります。送る時間帯の外になる場合は、時間帯の始まりに送ります。'
+        . '「当日（0日後）」のメールだけは、時刻を待たずにDLの直後に送ります。</p></td></tr>';
     echo '<tr><th>送信者</th><td><input type="text" name="from_name" class="regular-text" placeholder="例：工務店のミカタ" value="' . esc_attr($o['from_name']) . '"> '
         . '<input type="email" name="from_email" class="regular-text" placeholder="空欄ならサイトの既定" value="' . esc_attr($o['from_email']) . '">'
         . '<p class="description">メール送信のプラグイン（WP Mail SMTP など）が送信元を固定している場合は、そちらが優先されます。</p></td></tr>';
@@ -458,6 +464,8 @@ add_action('admin_post_msm_save_settings', function () {
         'enabled'       => empty($p['enabled']) ? 0 : 1,
         'send_start'    => max(0, min(23, (int) ($p['send_start'] ?? 9))),
         'send_end'      => max(1, min(24, (int) ($p['send_end'] ?? 20))),
+        'send_time'     => (($p['send_time'] ?? '') === 'fixed') ? 'fixed' : 'dl',
+        'send_hour'     => max(0, min(23, (int) ($p['send_hour'] ?? 10))),
         'from_name'     => sanitize_text_field($p['from_name'] ?? ''),
         'from_email'    => sanitize_email($p['from_email'] ?? ''),
         'footer'        => sanitize_textarea_field($p['footer'] ?? ''),

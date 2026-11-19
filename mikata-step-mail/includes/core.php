@@ -108,12 +108,46 @@ function msm_sig($data) {
 /* ------------------------------------------------------------------ 配信 */
 
 /* サイトの時刻で、送ってよい時間帯か */
+function msm_tz() {
+    return function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('Asia/Tokyo');
+}
+
 function msm_in_window($ts) {
-    $tz = function_exists('wp_timezone') ? wp_timezone() : new DateTimeZone('Asia/Tokyo');
-    $h = (int) (new DateTime('@' . $ts))->setTimezone($tz)->format('G');
+    return msm_hour_in_window((int) (new DateTime('@' . $ts))->setTimezone(msm_tz())->format('G'));
+}
+
+function msm_hour_in_window($h) {
     $s = (int) msm_opt('send_start');
     $e = (int) msm_opt('send_end');
     return $s <= $e ? ($h >= $s && $h < $e) : ($h >= $s || $h < $e);
+}
+
+/**
+ * 次のメールを送ってよい時刻。前のメール（1通目はDL）の日から○日後の、決まった時刻。
+ * 時刻は「DLしたのと同じ時刻」か「設定した時刻」。送る時間帯の外なら、時間帯の始まりにずらす。
+ * 時刻はDLの時刻から毎回求めるので、1通が遅れて届いても、次からはまた同じ時刻に戻る。
+ * 0日後（当日）のメールは、時刻を待たずに送る（DL直後のお礼など）。
+ */
+function msm_due_ts($base_ts, $started_at, $delay_days) {
+    $delay = (int) $delay_days;
+    if ($delay <= 0) return $base_ts;
+    $tz = msm_tz();
+    if (msm_opt('send_time') === 'fixed') {
+        $h = (int) msm_opt('send_hour');
+        $m = 0;
+    } else {
+        $dl = (new DateTime('@' . strtotime($started_at . ' UTC')))->setTimezone($tz);
+        $h = (int) $dl->format('G');
+        $m = intdiv((int) $dl->format('i'), 15) * 15;   // 15分ごとの配信に合わせて切り下げる（19時50分のDLでも20時の締めまでに1回は回る）
+    }
+    if (!msm_hour_in_window($h)) {
+        $h = (int) msm_opt('send_start');
+        $m = 0;
+    }
+    $d = (new DateTime('@' . $base_ts))->setTimezone($tz);
+    $d->modify('+' . $delay . ' days');
+    $d->setTime($h, $m);
+    return $d->getTimestamp();
 }
 
 /* 配信順に並んだ「送る状態」のメール（シナリオごと） */
@@ -224,7 +258,7 @@ function msm_engine($now_ts, $rows, &$sim) {
         } else {
             $base_ts = strtotime(($r->last_sent_at ? $r->last_sent_at : $r->started_at) . ' UTC');
         }
-        if ($base_ts + (int) $next->delay_days * DAY_IN_SECONDS > $now_ts) continue;
+        if (msm_due_ts($base_ts, $r->started_at, $next->delay_days) > $now_ts) continue;
         if ($dry) {
             $sim['log'][] = array('ts' => $now_ts, 'sub' => $r, 'step' => $next);
             $sim['done'][$sid][] = (int) $next->id;
